@@ -60,16 +60,17 @@ func New(cacheFile string, debug bool) (*Tld, error) {
 	isIcann := false
 	isPrivate := false
 	for _, t := range ts {
-		if t != "" && !strings.HasPrefix(t, "// ===BEGIN ICANN DOMAINS===") {
-			isIcann = true
-			isPrivate = false
-		}
-		if t != "" && !strings.HasPrefix(t, "// ===BEGIN PRIVATE DOMAINS===") {
-			isIcann = false
-			isPrivate = true
-		}
 		if t != "" && !strings.HasPrefix(t, "//") {
-			t = strings.TrimSpace(t)
+			parts := strings.Split(strings.TrimSpace(t), ",")
+			t = strings.TrimSpace(parts[0])
+			if parts[1] == "1" {
+				isIcann = true
+				isPrivate = false
+			}
+			if parts[1] == "2" {
+				isIcann = false
+				isPrivate = true
+			}
 			exceptionRule := t[0] == '!'
 			if exceptionRule {
 				t = t[1:]
@@ -181,13 +182,17 @@ func (tEx *Tld) getIndex(labels []string) (int, bool, bool, bool) {
 		n, found := t.matches[lab]
 		_, star := t.matches["*"]
 
-		switch {
-		case found && !n.ExceptRule:
-			parentValid = n.ValidTld
+		if found {
 			private = n.IsPrivate
 			icann = n.IsIcann
+		}
+
+		switch {
+		case found && !n.ExceptRule && !private:
+			parentValid = n.ValidTld
 			t = n
-		// Found an exception rule
+		case private:
+			fallthrough
 		case found:
 			fallthrough
 		case parentValid:
@@ -219,14 +224,20 @@ func readFromUrl() ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	body, _ := ioutil.ReadAll(resp.Body)
-
+	mode := "0"
 	lines := strings.Split(string(body), "\n")
 	var buffer bytes.Buffer
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
+		if line != "" && strings.HasPrefix(line, "// ===BEGIN ICANN DOMAINS===") {
+			mode = "1"
+		}
+		if line != "" && strings.HasPrefix(line, "// ===BEGIN PRIVATE DOMAINS===") {
+			mode = "2"
+		}
 		if line != "" && !strings.HasPrefix(line, "//") {
-			buffer.WriteString(line)
+			buffer.WriteString(line + "," + mode)
 			buffer.WriteString("\n")
 		}
 	}
