@@ -12,7 +12,7 @@ var (
 )
 
 func init() {
-	ex, err = New(cache, true)
+	ex, err = New(cache)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -2,7 +2,6 @@ package dex
 
 import (
 	"bytes"
-	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -21,11 +20,8 @@ type Result struct {
 }
 
 type Tld struct {
-	CacheFile  string
-	rootNode   *Trie
-	debug      bool
-	noValidate bool // do not validate URL schema
-	noStrip    bool // do not strip .html suffix from URL
+	CacheFile string
+	rootNode  *Trie
 }
 
 type Trie struct {
@@ -43,7 +39,7 @@ var (
 )
 
 // New creates a new *Tld, it may be shared between goroutines, we usually need a single instance in an application.
-func New(cacheFile string, debug bool) (*Tld, error) {
+func New(cacheFile string) (*Tld, error) {
 	data, err := ioutil.ReadFile(cacheFile)
 	if err != nil {
 		data, err = readFromUrl()
@@ -63,81 +59,67 @@ func New(cacheFile string, debug bool) (*Tld, error) {
 		if t != "" && !strings.HasPrefix(t, "//") {
 			parts := strings.Split(strings.TrimSpace(t), ",")
 			t = strings.TrimSpace(parts[0])
+
 			if parts[1] == "1" {
 				isIcann = true
 				isPrivate = false
 			}
+
 			if parts[1] == "2" {
 				isIcann = false
 				isPrivate = true
 			}
+
 			exceptionRule := t[0] == '!'
+
 			if exceptionRule {
 				t = t[1:]
 			}
-			addTldRule(rootNode, strings.Split(t, "."), exceptionRule, isIcann, isPrivate)
+
+			addToTrie(rootNode, strings.Split(t, "."), exceptionRule, isIcann, isPrivate)
 		}
 	}
 
-	return &Tld{CacheFile: cacheFile, rootNode: rootNode, debug: debug}, nil
+	return &Tld{CacheFile: cacheFile, rootNode: rootNode}, nil
 }
 
-// SetNoValidate disables schema check in order to increase performance.
-func (tEx *Tld) SetNoValidate() {
-	tEx.noValidate = true
-}
-
-// SetNoStrip disables URL stripping in order to increase performance.
-func (tEx *Tld) SetNoStrip() {
-	tEx.noStrip = true
-}
-
-func addTldRule(rootNode *Trie, labels []string, ex, icann, private bool) {
+func addToTrie(rootNode *Trie, labels []string, ex, icann, private bool) {
 	n := len(labels)
 	t := rootNode
 	for i := n - 1; i >= 0; i-- {
-		lab := labels[i]
-		m, found := t.matches[lab]
+		l := labels[i]
+		m, found := t.matches[l]
 		if !found {
 			except := ex
 			valid := !ex && i == 0
 			newMap := make(map[string]*Trie)
-			t.matches[lab] = &Trie{ExceptRule: except, ValidTld: valid, matches: newMap, IsIcann: icann, IsPrivate: private}
-			m = t.matches[lab]
+			t.matches[l] = &Trie{ExceptRule: except, ValidTld: valid, matches: newMap, IsIcann: icann, IsPrivate: private}
+			m = t.matches[l]
 		}
 		t = m
 	}
 }
 
 func (tEx *Tld) Parse(u string) *Result {
-	input := u
 	u = strings.ToLower(u)
-	if !tEx.noValidate {
-		u = schemaRegex.ReplaceAllString(u, "")
-		i := strings.Index(u, "@")
-		if i != -1 {
-			u = u[i+1:]
-		}
+	u = schemaRegex.ReplaceAllString(u, "")
+	i := strings.Index(u, "@")
+	if i != -1 {
+		u = u[i+1:]
+	}
 
-		index := strings.IndexFunc(u, func(r rune) bool {
-			switch r {
-			case '&', '/', '?', ':', '#':
-				return true
-			}
-			return false
-		})
-		if index != -1 {
-			u = u[0:index]
+	index := strings.IndexFunc(u, func(r rune) bool {
+		switch r {
+		case '&', '/', '?', ':', '#':
+			return true
 		}
+		return false
+	})
+
+	if index != -1 {
+		u = u[0:index]
 	}
-	if !tEx.noStrip {
-		if strings.HasSuffix(u, ".html") {
-			u = u[0 : len(u)-len(".html")]
-		}
-	}
-	if tEx.debug {
-		fmt.Printf("%s;%s\n", u, input)
-	}
+
 	return tEx.extract(u)
 }
 
@@ -153,7 +135,7 @@ func (tEx *Tld) extract(url string) *Result {
 		}
 		return &Result{IsIpV6: false, IsIpV4: false, IsIcann: false, IsPrivate: false}
 	}
-	sub, root := subdomain(domain)
+	sub, root := extractSubdomain(domain)
 	if domainRegex.MatchString(root) {
 		return &Result{Root: root, Subdomain: sub, Tld: tld, IsIcann: icann, IsPrivate: private, IsIpV4: false, IsIpV6: false}
 	}
@@ -207,7 +189,7 @@ func (tEx *Tld) getIndex(labels []string) (int, bool, bool, bool) {
 }
 
 //return sub domain,root domain
-func subdomain(d string) (string, string) {
+func extractSubdomain(d string) (string, string) {
 	ps := strings.Split(d, ".")
 	l := len(ps)
 	if l == 1 {
