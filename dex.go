@@ -38,9 +38,10 @@ var (
 	ip4Regex    = regexp.MustCompile(`(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])`)
 )
 
-// New creates a new *Tld, it may be shared between goroutines, we usually need a single instance in an application.
+// New creates a new *Tld, shared between goroutines
 func New(cacheFile string) (*Tld, error) {
 	data, err := ioutil.ReadFile(cacheFile)
+
 	if err != nil {
 		data, err = readFromUrl()
 		if err != nil {
@@ -50,11 +51,13 @@ func New(cacheFile string) (*Tld, error) {
 			return &Tld{}, err
 		}
 	}
+
 	ts := strings.Split(string(data), "\n")
 	newMap := make(map[string]*Trie)
 	rootNode := &Trie{ExceptRule: false, ValidTld: false, IsIcann: false, IsPrivate: false, matches: newMap}
 	isIcann := false
 	isPrivate := false
+
 	for _, t := range ts {
 		if t != "" && !strings.HasPrefix(t, "//") {
 			parts := strings.Split(strings.TrimSpace(t), ",")
@@ -84,18 +87,21 @@ func New(cacheFile string) (*Tld, error) {
 }
 
 func addToTrie(rootNode *Trie, labels []string, ex, icann, private bool) {
-	n := len(labels)
+	n := len(labels) - 1
 	t := rootNode
-	for i := n - 1; i >= 0; i-- {
+
+	for i := n; i >= 0; i-- {
 		l := labels[i]
-		m, found := t.matches[l]
-		if !found {
+		m, exists := t.matches[l]
+
+		if !exists {
 			except := ex
 			valid := !ex && i == 0
 			newMap := make(map[string]*Trie)
 			t.matches[l] = &Trie{ExceptRule: except, ValidTld: valid, matches: newMap, IsIcann: icann, IsPrivate: private}
 			m = t.matches[l]
 		}
+
 		t = m
 	}
 }
@@ -104,6 +110,7 @@ func (tEx *Tld) Parse(u string) *Result {
 	u = strings.ToLower(u)
 	u = schemaRegex.ReplaceAllString(u, "")
 	i := strings.Index(u, "@")
+
 	if i != -1 {
 		u = u[i+1:]
 	}
@@ -125,6 +132,7 @@ func (tEx *Tld) Parse(u string) *Result {
 
 func (tEx *Tld) extract(url string) *Result {
 	domain, tld, private, icann := tEx.extractTld(url)
+
 	if tld == "" {
 		ip := net.ParseIP(url)
 		if ip != nil {
@@ -133,13 +141,16 @@ func (tEx *Tld) extract(url string) *Result {
 			}
 			return &Result{IsIpV6: true, Root: url, IsIcann: false, IsPrivate: false}
 		}
-		return &Result{IsIpV6: false, IsIpV4: false, IsIcann: false, IsPrivate: false}
+		return invalid()
 	}
+
 	sub, root := extractSubdomain(domain)
+
 	if domainRegex.MatchString(root) {
 		return &Result{Root: root, Subdomain: sub, Tld: tld, IsIcann: icann, IsPrivate: private, IsIpV4: false, IsIpV6: false}
 	}
-	return &Result{IsIpV6: false, IsIpV4: false, IsIcann: false, IsPrivate: false}
+
+	return invalid()
 }
 
 func (tEx *Tld) extractTld(url string) (domain, tld string, private, icann bool) {
@@ -156,10 +167,12 @@ func (tEx *Tld) extractTld(url string) (domain, tld string, private, icann bool)
 
 func (tEx *Tld) getIndex(labels []string) (int, bool, bool, bool) {
 	t := tEx.rootNode
-	parentValid := false
+	validParent := false
 	private := false
 	icann := false
-	for i := len(labels) - 1; i >= 0; i-- {
+	n := len(labels) - 1
+
+	for i := n; i >= 0; i-- {
 		lab := labels[i]
 		n, found := t.matches[lab]
 		_, star := t.matches["*"]
@@ -171,20 +184,21 @@ func (tEx *Tld) getIndex(labels []string) (int, bool, bool, bool) {
 
 		switch {
 		case found && !n.ExceptRule && !private:
-			parentValid = n.ValidTld
+			validParent = n.ValidTld
 			t = n
 		case private:
 			fallthrough
 		case found:
 			fallthrough
-		case parentValid:
+		case validParent:
 			return i + 1, true, private, icann
 		case star:
-			parentValid = true
+			validParent = true
 		default:
 			return -1, false, private, icann
 		}
 	}
+
 	return -1, false, private, icann
 }
 
@@ -225,4 +239,8 @@ func readFromUrl() ([]byte, error) {
 	}
 
 	return buffer.Bytes(), nil
+}
+
+func invalid() *Result {
+	return &Result{IsIpV6: false, IsIpV4: false, IsIcann: false, IsPrivate: false}
 }
